@@ -1,10 +1,11 @@
 import AppKit
+import CoreLocation
 
 let bundleID = "com.sijie.gtime"
 
-// Single-instance guard: if another copy is already running, quit quietly.
+// Single-instance guard: if another live copy is already running, quit quietly.
 let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-    .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && !$0.isTerminated }
 if !others.isEmpty {
     exit(0)
 }
@@ -12,9 +13,16 @@ if !others.isEmpty {
 // MARK: - Search window
 
 final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private enum Row {
+        case city(City)
+        case searchOnline(String)
+        case status(String)
+    }
+
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
-    private var results: [City] = []
+    private var rows: [Row] = []
+    private let geocoder = CLGeocoder()
     var onAdd: ((City) -> Void)?
 
     convenience init() {
@@ -25,6 +33,8 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
         panel.title = "添加城市"
         panel.isReleasedWhenClosed = false
         panel.level = .floating
+        panel.hidesOnDeactivate = false          // keep the in-progress search alive when switching apps
+        panel.contentMinSize = NSSize(width: 360, height: 220)
         self.init(window: panel)
 
         let content = NSView()
@@ -71,13 +81,27 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
     }
 
     func show() {
-        results = []
+        // Already open (e.g. user re-picked the menu item): just refocus, keep the query.
+        if window?.isVisible == true {
+            NSApp.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
+            window?.makeFirstResponder(searchField)
+            return
+        }
+        rows = []
         searchField.stringValue = ""
         tableView.reloadData()
         window?.center()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(searchField)
+    }
+
+    /// Close the panel and hand activation back to the previously frontmost app
+    /// (an accessory app with no other windows would otherwise strand keyboard focus).
+    private func closePanel() {
+        window?.close()
+        NSApp.hide(nil)
     }
 
     private func offsetLabel(_ tzID: String) -> String {
@@ -96,10 +120,53 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
 
     // NSTextFieldDelegate
     func controlTextDidChange(_ obj: Notification) {
-        results = searchCities(searchField.stringValue)
+        geocoder.cancelGeocode()
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        rows = searchCities(query).map { Row.city($0) }
+        if !query.isEmpty {
+            rows.append(.searchOnline(query))
+        }
         tableView.reloadData()
-        if !results.isEmpty {
+        if !rows.isEmpty {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
+    }
+
+    private func startOnlineSearch(_ query: String) {
+        geocoder.cancelGeocode()
+        rows = rows.filter { if case .city = $0 { return true } else { return false } }
+        rows.append(.status("正在在线搜索 \u{201C}\(query)\u{201D}…"))
+        tableView.reloadData()
+        geocoder.geocodeAddressString(query, in: nil, preferredLocale: Locale(identifier: "zh_CN")) { [weak self] placemarks, error in
+            guard let self = self else { return }
+            // Stale response: the query has changed since this request started.
+            let current = self.searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard current == query else { return }
+
+            self.rows = self.rows.filter { if case .city = $0 { return true } else { return false } }
+            var found: [City] = []
+            for p in placemarks ?? [] {
+                guard let tz = p.timeZone else { continue }
+                let name = p.name ?? p.locality ?? query
+                let dup = found.contains { $0.en == name && $0.tzID == tz.identifier }
+                if dup { continue }
+                found.append(City(en: name, zh: name,
+                                  countryEn: p.country ?? "", countryZh: p.country ?? "",
+                                  flag: flagEmoji(countryCode: p.isoCountryCode),
+                                  tzID: tz.identifier))
+            }
+            if found.isEmpty {
+                let reason = error == nil ? "未找到 \u{201C}\(query)\u{201D}" : "在线搜索失败,请检查网络后重试"
+                self.rows.append(.status(reason))
+            } else {
+                let firstOnline = self.rows.count
+                self.rows.append(contentsOf: found.map { Row.city($0) })
+                self.tableView.reloadData()
+                self.tableView.selectRowIndexes(IndexSet(integer: firstOnline), byExtendingSelection: false)
+                self.tableView.scrollRowToVisible(firstOnline)
+                return
+            }
+            self.tableView.reloadData()
         }
     }
 
@@ -115,31 +182,50 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
             moveSelection(by: -1)
             return true
         case #selector(NSResponder.cancelOperation(_:)):
-            window?.close()
+            closePanel()
             return true
         default:
             return false
         }
     }
 
+    private func isSelectable(_ row: Row) -> Bool {
+        if case .status = row { return false }
+        return true
+    }
+
     private func moveSelection(by delta: Int) {
-        guard !results.isEmpty else { return }
-        let current = tableView.selectedRow
-        let next = min(max(current + delta, 0), results.count - 1)
+        guard !rows.isEmpty else { return }
+        var next = (tableView.selectedRow < 0 ? 0 : tableView.selectedRow) + delta
+        while next >= 0, next < rows.count, !isSelectable(rows[next]) {
+            next += delta > 0 ? 1 : -1
+        }
+        guard next >= 0, next < rows.count else { return }
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
         tableView.scrollRowToVisible(next)
     }
 
     @objc private func addSelected() {
-        let row = tableView.selectedRow >= 0 ? tableView.selectedRow : 0
-        guard row < results.count else { return }
-        onAdd?(results[row])
-        window?.close()
+        let index = tableView.selectedRow >= 0 ? tableView.selectedRow : 0
+        guard index < rows.count else { return }
+        switch rows[index] {
+        case .city(let city):
+            onAdd?(city)
+            closePanel()
+        case .searchOnline(let query):
+            startOnlineSearch(query)
+        case .status:
+            NSSound.beep()
+        }
     }
 
     // NSTableViewDataSource / Delegate
     func numberOfRows(in tableView: NSTableView) -> Int {
-        return results.count
+        return rows.count
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        return row < rows.count && isSelectable(rows[row])
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -152,7 +238,17 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
             field.identifier = id
             field.lineBreakMode = .byTruncatingTail
         }
-        field.stringValue = display(results[row])
+        switch rows[row] {
+        case .city(let c):
+            field.stringValue = display(c)
+            field.textColor = .labelColor
+        case .searchOnline(let q):
+            field.stringValue = "🔍 在线搜索 \u{201C}\(q)\u{201D}(小城市、任意地名)"
+            field.textColor = .labelColor
+        case .status(let text):
+            field.stringValue = text
+            field.textColor = .secondaryLabelColor
+        }
         return field
     }
 }
@@ -202,6 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if defaults.object(forKey: "didSetupLaunchAtLogin") == nil {
             setLaunchAtLogin(true)
             defaults.set(true, forKey: "didSetupLaunchAtLogin")
+        } else if launchAtLoginEnabled() {
+            // Self-heal: if the app was moved, refresh the frozen path in the plist.
+            setLaunchAtLogin(true)
         }
     }
 
@@ -219,22 +318,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Timer & system events
 
+    // One-shot timer re-armed from the wall clock each fire, so it can't drift out of
+    // alignment across NTP slews or sleep. Must run on the main thread.
     private func scheduleMinuteTimer() {
         timer?.invalidate()
         let nextMinute = (Date().timeIntervalSinceReferenceDate / 60.0).rounded(.up) * 60.0 + 0.1
-        let t = Timer(fireAt: Date(timeIntervalSinceReferenceDate: nextMinute), interval: 60,
-                      target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        let t = Timer(fireAt: Date(timeIntervalSinceReferenceDate: nextMinute), interval: 0,
+                      target: self, selector: #selector(tick), userInfo: nil, repeats: false)
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
 
     @objc private func tick() {
         refreshTitle()
+        scheduleMinuteTimer()
     }
 
+    // System clock/time-zone notifications are delivered on Foundation's thread, not main;
+    // hop to main before touching AppKit or the run-loop timer.
     @objc private func systemChanged() {
-        refreshTitle()
-        scheduleMinuteTimer()
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshTitle()
+            self?.scheduleMinuteTimer()
+        }
     }
 
     // MARK: Menu
@@ -367,8 +473,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 // MARK: - Entry point
 
+/// Minimal Edit menu so the standard clipboard shortcuts work inside the search field.
+/// An accessory app has no menu bar, but Cmd-key equivalents still route through mainMenu.
+func makeEditMenu() -> NSMenu {
+    let mainMenu = NSMenu()
+    let editItem = NSMenuItem()
+    mainMenu.addItem(editItem)
+    let editMenu = NSMenu(title: "Edit")
+    editItem.submenu = editMenu
+    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    return mainMenu
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
+app.mainMenu = makeEditMenu()
 app.run()

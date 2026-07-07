@@ -116,6 +116,14 @@ for c in cityDatabase {
     seen.insert(key)
 }
 
+// ── flagEmoji ────────────────────────────────────────────────────────────────
+expectEq(flagEmoji(countryCode: "DE"), "🇩🇪", "Germany flag from ISO code")
+expectEq(flagEmoji(countryCode: "gb"), "🇬🇧", "lowercase ISO code")
+expectEq(flagEmoji(countryCode: "CN"), "🇨🇳", "China flag from ISO code")
+expectEq(flagEmoji(countryCode: nil), "🌐", "nil code falls back to globe")
+expectEq(flagEmoji(countryCode: ""), "🌐", "empty code falls back to globe")
+expectEq(flagEmoji(countryCode: "X1"), "🌐", "non-alphabetic code falls back to globe")
+
 // ── persistence round-trip ───────────────────────────────────────────────────
 let encoded = encodeEntries([ukEntry, cnEntry])
 expectEq(decodeEntries(encoded), [ukEntry, cnEntry], "entries JSON round-trip")

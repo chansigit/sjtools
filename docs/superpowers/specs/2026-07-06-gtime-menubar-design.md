@@ -32,6 +32,9 @@ gtime/
 - `timeString` / `statusText`:菜单栏文本合成;空列表 → "🌐"
 - `searchCities(query)`:匹配中文名、英文名、国家名、拼音(CFStringTransform 生成)、
   IANA 标识符;前缀匹配优先于包含匹配;未收录城市可直接搜 443 个 IANA 时区 ID
+- `flagEmoji(countryCode:)`:ISO 3166-1 alpha-2 → 区域指示符国旗 emoji(在线结果用)
+- 在线兜底:本地库无结果时,搜索窗口出现「🔍 在线搜索」行,回车用 CLGeocoder
+  (Apple 地图数据,任意语言地名)解析出 placemark 的时区,无需定位权限
 
 ### 应用壳(AppKit)
 

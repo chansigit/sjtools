@@ -64,6 +64,18 @@ func statusText(entries: [TimeEntry], now: Date, local: TimeZone, use24h: Bool) 
     return parts.isEmpty ? "🌐" : parts.joined(separator: "  ")
 }
 
+/// Regional-indicator flag emoji for an ISO 3166-1 alpha-2 country code ("DE" → "🇩🇪").
+func flagEmoji(countryCode: String?) -> String {
+    guard let code = countryCode?.uppercased(), code.count == 2 else { return "🌐" }
+    var flag = ""
+    for scalar in code.unicodeScalars {
+        guard scalar.value >= 65, scalar.value <= 90,
+              let regional = Unicode.Scalar(0x1F1E6 + scalar.value - 65) else { return "🌐" }
+        flag.append(Character(regional))
+    }
+    return flag
+}
+
 // MARK: - Persistence
 
 func encodeEntries(_ entries: [TimeEntry]) -> Data {

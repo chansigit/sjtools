@@ -50,13 +50,20 @@ codesign --force --sign - "$APP"
 
 echo "==> Installing"
 DEST=/Applications
+OTHER="$HOME/Applications"
 if [ ! -w "$DEST" ]; then
   DEST="$HOME/Applications"
+  OTHER=/Applications
   mkdir -p "$DEST"
 fi
-# Stop a running copy before replacing it
+# Stop a running copy and wait for it to actually exit before replacing it
 pkill -x GTime 2>/dev/null || true
-sleep 0.3
+for _ in $(seq 1 30); do
+  pgrep -x GTime >/dev/null || break
+  sleep 0.1
+done
+# Drop any stale copy at the other candidate location so the LaunchAgent can't launch it
+rm -rf "$OTHER/GTime.app" 2>/dev/null || true
 rm -rf "$DEST/GTime.app"
 cp -R "$APP" "$DEST/"
 
