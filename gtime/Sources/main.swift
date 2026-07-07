@@ -262,6 +262,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var use24h = false
     private let searchController = SearchWindowController()
     private let defaults = UserDefaults.standard
+    private lazy var scrollController = ScrollFlipController(
+        settings: decodeScrollSettings(defaults.data(forKey: "scrollSettings") ?? Data()))
 
     private var launchAgentURL: URL {
         return FileManager.default.homeDirectoryForCurrentUser
@@ -302,6 +304,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Self-heal: if the app was moved, refresh the frozen path in the plist.
             setLaunchAtLogin(true)
         }
+
+        // Re-apply persisted scroll settings (starts the tap if trusted and needed).
+        scrollController.apply()
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(scrollBaselineChanged),
+            name: NSNotification.Name("SwipeScrollDirectionDidChangeNotification"), object: nil)
+    }
+
+    @objc private func scrollBaselineChanged() {
+        DispatchQueue.main.async { [weak self] in self?.scrollController.apply() }
     }
 
     // MARK: State
@@ -404,6 +416,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(login)
 
         menu.addItem(.separator())
+        menu.addItem(buildScrollMenuItem())
+
+        menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "退出 GTime", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
@@ -440,6 +455,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         use24h = !use24h
         defaults.set(use24h, forKey: "use24h")
         refreshTitle()
+    }
+
+    // MARK: Scroll direction
+
+    private func buildScrollMenuItem() -> NSMenuItem {
+        // Refresh flips from the live system baseline so the checkmarks and tap state are current.
+        scrollController.apply()
+        let s = scrollController.settings
+        let baseline = systemNaturalScrolling()
+
+        let root = NSMenuItem(title: "滚动方向", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        func deviceItem(_ emoji: String, _ name: String, current: ScrollDir, selector: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: "\(emoji) \(name):\(current == .natural ? "自然" : "反转")",
+                                  action: nil, keyEquivalent: "")
+            let m = NSMenu()
+            let nat = NSMenuItem(title: "自然", action: selector, keyEquivalent: "")
+            nat.target = self; nat.tag = 0; nat.state = current == .natural ? .on : .off
+            let rev = NSMenuItem(title: "反转", action: selector, keyEquivalent: "")
+            rev.target = self; rev.tag = 1; rev.state = current == .reverse ? .on : .off
+            m.addItem(nat); m.addItem(rev)
+            item.submenu = m
+            return item
+        }
+
+        sub.addItem(deviceItem("🖱", "鼠标", current: s.mouse, selector: #selector(setMouseDir(_:))))
+        sub.addItem(deviceItem("🖐", "触控板", current: s.trackpad, selector: #selector(setTrackpadDir(_:))))
+        sub.addItem(.separator())
+
+        let info = NSMenuItem(title: "系统自然滚动:\(baseline ? "开" : "关")", action: nil, keyEquivalent: "")
+        info.isEnabled = false
+        sub.addItem(info)
+
+        let flips = computeFlips(settings: s, baselineNatural: baseline)
+        if shouldRunTap(flips) && !hasAccessibilityPermission(prompt: false) {
+            let perm = NSMenuItem(title: "⚠️ 授予辅助功能权限…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            perm.target = self
+            sub.addItem(perm)
+        }
+
+        root.submenu = sub
+        return root
+    }
+
+    private func applyScroll(_ s: ScrollSettings) {
+        defaults.set(encodeScrollSettings(s), forKey: "scrollSettings")
+        scrollController.apply(s, promptForPermission: true)
+    }
+
+    @objc private func setMouseDir(_ sender: NSMenuItem) {
+        var s = scrollController.settings
+        s.mouse = sender.tag == 1 ? .reverse : .natural
+        applyScroll(s)
+    }
+
+    @objc private func setTrackpadDir(_ sender: NSMenuItem) {
+        var s = scrollController.settings
+        s.trackpad = sender.tag == 1 ? .reverse : .natural
+        applyScroll(s)
+    }
+
+    @objc private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: Launch at login (LaunchAgent; SMAppService needs a newer SDK than this box has)

@@ -129,5 +129,45 @@ let encoded = encodeEntries([ukEntry, cnEntry])
 expectEq(decodeEntries(encoded), [ukEntry, cnEntry], "entries JSON round-trip")
 expectEq(decodeEntries(Data("garbage".utf8)), [], "garbage data decodes to empty")
 
+// ── computeFlips (baseline XOR desired) ──────────────────────────────────────
+// System natural scrolling ON (baselineNatural = true)
+expectEq(computeFlips(settings: ScrollSettings(mouse: .natural, trackpad: .natural), baselineNatural: true),
+         ScrollFlips(mouse: false, trackpad: false), "baseline natural, both natural = no flips")
+expectEq(computeFlips(settings: ScrollSettings(mouse: .reverse, trackpad: .natural), baselineNatural: true),
+         ScrollFlips(mouse: true, trackpad: false), "baseline natural, mouse reverse only")
+expectEq(computeFlips(settings: ScrollSettings(mouse: .natural, trackpad: .reverse), baselineNatural: true),
+         ScrollFlips(mouse: false, trackpad: true), "baseline natural, trackpad reverse only")
+// System natural scrolling OFF (baselineNatural = false — already traditional)
+expectEq(computeFlips(settings: ScrollSettings(mouse: .natural, trackpad: .natural), baselineNatural: false),
+         ScrollFlips(mouse: true, trackpad: true), "baseline traditional, both natural = flip both")
+expectEq(computeFlips(settings: ScrollSettings(mouse: .reverse, trackpad: .reverse), baselineNatural: false),
+         ScrollFlips(mouse: false, trackpad: false), "baseline traditional, both reverse = no flips")
+
+// ── shouldRunTap ─────────────────────────────────────────────────────────────
+expectEq(shouldRunTap(ScrollFlips(mouse: false, trackpad: false)), false, "no flips = no tap")
+expectEq(shouldRunTap(ScrollFlips(mouse: true, trackpad: false)), true, "mouse flip = run tap")
+expectEq(shouldRunTap(ScrollFlips(mouse: false, trackpad: true)), true, "trackpad flip = run tap")
+expectEq(shouldRunTap(ScrollFlips(mouse: true, trackpad: true)), true, "both flip = run tap")
+
+// ── reversedVerticalDelta: Int64 ─────────────────────────────────────────────
+let mouseFlip = ScrollFlips(mouse: true, trackpad: false)
+let tpFlip = ScrollFlips(mouse: false, trackpad: true)
+let noFlip = ScrollFlips(mouse: false, trackpad: false)
+expectEq(reversedVerticalDelta(Int64(5), isContinuous: false, flips: mouseFlip), Int64(-5), "mouse event flipped when mouse flip on")
+expectEq(reversedVerticalDelta(Int64(5), isContinuous: true, flips: mouseFlip), Int64(5), "trackpad event untouched when only mouse flip")
+expectEq(reversedVerticalDelta(Int64(5), isContinuous: true, flips: tpFlip), Int64(-5), "trackpad event flipped when trackpad flip on")
+expectEq(reversedVerticalDelta(Int64(5), isContinuous: false, flips: tpFlip), Int64(5), "mouse event untouched when only trackpad flip")
+expectEq(reversedVerticalDelta(Int64(-3), isContinuous: false, flips: noFlip), Int64(-3), "no flip leaves delta unchanged")
+
+// ── reversedVerticalDelta: Double (fixed-point field) ─────────────────────────
+expectEq(reversedVerticalDelta(Double(2.5), isContinuous: false, flips: mouseFlip), Double(-2.5), "double mouse flip")
+expectEq(reversedVerticalDelta(Double(2.5), isContinuous: true, flips: mouseFlip), Double(2.5), "double trackpad untouched")
+expectEq(reversedVerticalDelta(Double(2.5), isContinuous: true, flips: tpFlip), Double(-2.5), "double trackpad flip")
+
+// ── scroll settings persistence ──────────────────────────────────────────────
+let ss = ScrollSettings(mouse: .reverse, trackpad: .natural)
+expectEq(decodeScrollSettings(encodeScrollSettings(ss)), ss, "scroll settings JSON round-trip")
+expectEq(decodeScrollSettings(Data("junk".utf8)), ScrollSettings.default, "garbage scroll settings → default")
+
 print("\n\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
