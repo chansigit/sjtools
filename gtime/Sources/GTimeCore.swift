@@ -76,6 +76,12 @@ func flagEmoji(countryCode: String?) -> String {
     return flag
 }
 
+/// A city is a duplicate if an existing entry already uses the same timezone —
+/// its menu-bar clock would show an identical time, so adding it again is redundant.
+func isDuplicateEntry(tzID: String, in entries: [TimeEntry]) -> Bool {
+    return entries.contains { $0.tzID == tzID }
+}
+
 // MARK: - Persistence
 
 func encodeEntries(_ entries: [TimeEntry]) -> Data {

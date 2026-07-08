@@ -13,7 +13,7 @@ struct ScrollSettings: Codable, Equatable {
     var mouse: ScrollDir
     var trackpad: ScrollDir
 
-    static let `default` = ScrollSettings(mouse: .natural, trackpad: .natural)
+    static let `default` = ScrollSettings(mouse: .reverse, trackpad: .natural)
 }
 
 /// Whether each device's scroll deltas must be negated, given the desired settings

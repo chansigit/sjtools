@@ -164,6 +164,16 @@ expectEq(reversedVerticalDelta(Double(2.5), isContinuous: false, flips: mouseFli
 expectEq(reversedVerticalDelta(Double(2.5), isContinuous: true, flips: mouseFlip), Double(2.5), "double trackpad untouched")
 expectEq(reversedVerticalDelta(Double(2.5), isContinuous: true, flips: tpFlip), Double(-2.5), "double trackpad flip")
 
+// ── duplicate city detection ─────────────────────────────────────────────────
+let existingEntries = [TimeEntry(en: "Beijing", zh: "北京", flag: "🇨🇳", tzID: "Asia/Shanghai")]
+expectTrue(isDuplicateEntry(tzID: "Asia/Shanghai", in: existingEntries), "same timezone is a duplicate")
+expectTrue(!isDuplicateEntry(tzID: "Asia/Tokyo", in: existingEntries), "different timezone is not a duplicate")
+expectTrue(!isDuplicateEntry(tzID: "Asia/Shanghai", in: []), "empty list has no duplicates")
+
+// ── scroll defaults ──────────────────────────────────────────────────────────
+expectEq(ScrollSettings.default.mouse, .reverse, "default mouse is reverse")
+expectEq(ScrollSettings.default.trackpad, .natural, "default trackpad is natural")
+
 // ── scroll settings persistence ──────────────────────────────────────────────
 let ss = ScrollSettings(mouse: .reverse, trackpad: .natural)
 expectEq(decodeScrollSettings(encodeScrollSettings(ss)), ss, "scroll settings JSON round-trip")

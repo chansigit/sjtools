@@ -23,7 +23,8 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
     private let tableView = NSTableView()
     private var rows: [Row] = []
     private let geocoder = CLGeocoder()
-    var onAdd: ((City) -> Void)?
+    /// Returns true if the city was added, false if it was a duplicate (already present).
+    var onAdd: ((City) -> Bool)?
 
     convenience init() {
         let panel = NSPanel(
@@ -210,8 +211,13 @@ final class SearchWindowController: NSWindowController, NSSearchFieldDelegate, N
         guard index < rows.count else { return }
         switch rows[index] {
         case .city(let city):
-            onAdd?(city)
-            closePanel()
+            if onAdd?(city) == false {
+                NSSound.beep()
+                rows = [.status("已添加过该时区,不重复添加")]
+                tableView.reloadData()
+            } else {
+                closePanel()
+            }
         case .searchOnline(let query):
             startOnlineSearch(query)
         case .status:
@@ -280,10 +286,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         searchController.onAdd = { [weak self] city in
-            guard let self = self else { return }
+            guard let self = self else { return false }
+            if isDuplicateEntry(tzID: city.tzID, in: self.entries) { return false }
             self.entries.append(TimeEntry(en: city.en, zh: city.zh, flag: city.flag, tzID: city.tzID))
             self.saveEntries()
             self.refreshTitle()
+            return true
         }
 
         refreshTitle()
@@ -305,8 +313,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             setLaunchAtLogin(true)
         }
 
-        // Re-apply persisted scroll settings (starts the tap if trusted and needed).
-        scrollController.apply()
+        // Scroll settings: remember the user's choice across launches. On the very
+        // first run, persist the default (mouse reverse / trackpad natural) and prompt
+        // once for Accessibility so the default actually takes effect.
+        if defaults.data(forKey: "scrollSettings") == nil {
+            defaults.set(encodeScrollSettings(scrollController.settings), forKey: "scrollSettings")
+            scrollController.apply(promptForPermission: true)
+        } else {
+            scrollController.apply()
+        }
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(scrollBaselineChanged),
             name: NSNotification.Name("SwipeScrollDirectionDidChangeNotification"), object: nil)
