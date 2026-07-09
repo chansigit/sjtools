@@ -212,5 +212,26 @@ expectEq(dockEdge(from: "right"), DockEdge.right, "parse right orientation")
 expectEq(dockEdge(from: "bottom"), DockEdge.bottom, "parse bottom orientation")
 expectEq(dockEdge(from: "garbage"), DockEdge.bottom, "unknown orientation defaults to bottom")
 
+// ── DDC/CI brightness payload ────────────────────────────────────────────────
+// Set-VCP frame for brightness (VCP 0x10) at value 50: [0x84,0x03,0x10,0x00,0x32,chk]
+let ddc = ddcSetVCPPayload(vcp: 0x10, value: 50)
+expectEq(ddc.count, 6, "ddc payload length")
+expectEq(ddc[0], UInt8(0x84), "ddc length/opcode byte")
+expectEq(ddc[1], UInt8(0x03), "ddc set-vcp command")
+expectEq(ddc[2], UInt8(0x10), "ddc vcp code = brightness")
+expectEq(ddc[3], UInt8(0), "ddc value high byte")
+expectEq(ddc[4], UInt8(50), "ddc value low byte")
+let ddcChk: UInt8 = 0x6e ^ 0x51 ^ 0x84 ^ 0x03 ^ 0x10 ^ 0x00 ^ 0x32
+expectEq(ddc[5], ddcChk, "ddc checksum (XOR incl. 0x6e dest)")
+// high-byte value is carried correctly
+let ddcBig = ddcSetVCPPayload(vcp: 0x10, value: 300)
+expectEq(ddcBig[3], UInt8(1), "ddc value high byte for 300")
+expectEq(ddcBig[4], UInt8(44), "ddc value low byte for 300")
+
+// ── brightness percent clamping ──────────────────────────────────────────────
+expectEq(clampBrightnessPercent(150), 100, "clamp above 100")
+expectEq(clampBrightnessPercent(-5), 0, "clamp below 0")
+expectEq(clampBrightnessPercent(50), 50, "in-range percent unchanged")
+
 print("\n\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

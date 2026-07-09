@@ -271,6 +271,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var scrollController = ScrollFlipController(
         settings: decodeScrollSettings(defaults.data(forKey: "scrollSettings") ?? Data()))
     private lazy var dockController = DockPinController(targetName: defaults.string(forKey: "dockPinTarget"))
+    private let brightnessController = BrightnessController()
+    private var brightnessTargets: [BrightnessTarget] = []
 
     private var launchAgentURL: URL {
         return FileManager.default.homeDirectoryForCurrentUser
@@ -437,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(buildScrollMenuItem())
         menu.addItem(buildDockMenuItem())
+        menu.addItem(buildBrightnessMenuItem())
 
         menu.addItem(.separator())
 
@@ -591,6 +594,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defaults.removeObject(forKey: "dockPinTarget")
         }
         dockController.setTarget(name, promptForPermission: true)
+    }
+
+    // MARK: Display brightness
+
+    private func buildBrightnessMenuItem() -> NSMenuItem {
+        brightnessController.refresh()
+        brightnessTargets = brightnessController.targets
+
+        let root = NSMenuItem(title: "显示器亮度", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        if brightnessTargets.isEmpty {
+            let none = NSMenuItem(title: "未检测到显示器", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            sub.addItem(none)
+        }
+        for (i, t) in brightnessTargets.enumerated() {
+            let item = NSMenuItem()
+            item.view = brightnessRow(for: t, index: i)
+            sub.addItem(item)
+        }
+        root.submenu = sub
+        return root
+    }
+
+    private func brightnessRow(for t: BrightnessTarget, index: Int) -> NSView {
+        let width: CGFloat = 280, height: CGFloat = 52
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+
+        let label = NSTextField(labelWithString: t.supported ? "🔆 \(t.name)" : "🔆 \(t.name)(不支持 DDC)")
+        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = t.supported ? .labelColor : .secondaryLabelColor
+        label.frame = NSRect(x: 20, y: 28, width: width - 40, height: 16)
+        container.addSubview(label)
+
+        let slider = NSSlider(value: Double(brightnessController.currentPercent(t)),
+                              minValue: 0, maxValue: 100,
+                              target: self, action: #selector(brightnessChanged(_:)))
+        slider.frame = NSRect(x: 20, y: 6, width: width - 40, height: 20)
+        slider.isEnabled = t.supported
+        slider.isContinuous = true
+        slider.tag = index
+        container.addSubview(slider)
+
+        return container
+    }
+
+    @objc private func brightnessChanged(_ sender: NSSlider) {
+        guard sender.tag >= 0, sender.tag < brightnessTargets.count else { return }
+        brightnessController.setPercent(brightnessTargets[sender.tag], Int(sender.doubleValue.rounded()))
     }
 
     // MARK: Launch at login (LaunchAgent; SMAppService needs a newer SDK than this box has)
