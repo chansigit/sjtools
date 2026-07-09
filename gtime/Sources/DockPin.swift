@@ -127,6 +127,17 @@ final class DockPinController {
         let edge = self.edge
         let saved = CGEvent(source: nil)?.location
 
+        // Push at a point on the target's Dock edge that is a TRUE outer edge (no display
+        // beyond it). The edge's midpoint may be an internal boundary with an adjacent
+        // display — pushing there just crosses over and never triggers migration.
+        let edgePt = dockEdgeHotspot(b, edge)
+        let approach: CGPoint, dx: Double, dy: Double
+        switch edge {
+        case .bottom: approach = CGPoint(x: edgePt.x, y: edgePt.y - 39); dx = 0; dy = 12
+        case .left:   approach = CGPoint(x: edgePt.x + 39, y: edgePt.y); dx = -12; dy = 0
+        case .right:  approach = CGPoint(x: edgePt.x - 39, y: edgePt.y); dx = 12; dy = 0
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             func post(_ p: CGPoint, dx: Double, dy: Double) {
                 if let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
@@ -136,30 +147,59 @@ final class DockPinController {
                     e.post(tap: .cghidEventTap)
                 }
             }
-            let approach: CGPoint, edgePt: CGPoint, dx: Double, dy: Double
-            switch edge {
-            case .bottom: approach = CGPoint(x: b.midX, y: b.maxY - 40); edgePt = CGPoint(x: b.midX, y: b.maxY - 1); dx = 0; dy = 12
-            case .left:   approach = CGPoint(x: b.minX + 40, y: b.midY); edgePt = CGPoint(x: b.minX + 1, y: b.midY); dx = -12; dy = 0
-            case .right:  approach = CGPoint(x: b.maxX - 40, y: b.midY); edgePt = CGPoint(x: b.maxX - 1, y: b.midY); dx = 12; dy = 0
-            }
+            // Hide the pointer so the migration nudge isn't visible (best-effort).
+            CGDisplayHideCursor(CGMainDisplayID())
             CGWarpMouseCursorPosition(approach)
             CGAssociateMouseAndMouseCursorPosition(1)
             usleep(50_000)
-            // step toward the edge
             for i in 1...10 {
                 let f = CGFloat(i) / 10.0
                 post(CGPoint(x: approach.x + (edgePt.x - approach.x) * f,
                              y: approach.y + (edgePt.y - approach.y) * f), dx: dx, dy: dy)
                 usleep(12_000)
             }
-            // sustained pressure against the edge
             for _ in 0..<40 { post(edgePt, dx: dx, dy: dy); usleep(12_000) }
-            usleep(150_000)
+            usleep(120_000)
             if let saved = saved {
                 CGWarpMouseCursorPosition(saved)
                 CGAssociateMouseAndMouseCursorPosition(1)
             }
+            CGDisplayShowCursor(CGMainDisplayID())
         }
+    }
+
+    /// A point on the display's Dock edge that is a true outer edge (nothing beyond it),
+    /// chosen at the middle of the longest such run so the Dock press actually registers.
+    private func dockEdgeHotspot(_ b: CGRect, _ edge: DockEdge) -> CGPoint {
+        let n = 60
+        func pointAt(_ t: CGFloat) -> CGPoint {
+            switch edge {
+            case .bottom: return CGPoint(x: b.minX + b.width * t, y: b.maxY - 1)
+            case .left:   return CGPoint(x: b.minX + 1, y: b.minY + b.height * t)
+            case .right:  return CGPoint(x: b.maxX - 1, y: b.minY + b.height * t)
+            }
+        }
+        var outer = [Bool](repeating: false, count: n + 1)
+        for i in 0...n {
+            let p = pointAt(CGFloat(i) / CGFloat(n))
+            let probe = edgeProbePoint(point: p, displayBounds: b, dockEdge: edge)
+            var d: CGDirectDisplayID = 0
+            var c: UInt32 = 0
+            CGGetDisplaysWithRect(CGRect(x: probe.x, y: probe.y, width: 1, height: 1), 1, &d, &c)
+            outer[i] = (c == 0)
+        }
+        var bestStart = 0, bestLen = 0, curStart = 0, curLen = 0
+        for i in 0...n {
+            if outer[i] {
+                if curLen == 0 { curStart = i }
+                curLen += 1
+                if curLen > bestLen { bestLen = curLen; bestStart = curStart }
+            } else {
+                curLen = 0
+            }
+        }
+        if bestLen == 0 { return pointAt(0.5) }   // no outer edge (fully bordered); fall back
+        return pointAt(CGFloat(bestStart + bestLen / 2) / CGFloat(n))
     }
 
     @discardableResult
