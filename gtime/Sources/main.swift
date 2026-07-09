@@ -331,6 +331,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Re-apply persisted Dock pin (starts the tap if trusted and a display is pinned).
         dockController.reapply()
+
+        // React to displays being plugged/unplugged: re-resolve the Dock pin target
+        // (its display may have come/gone) and refresh brightness targets/menus.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screensChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    }
+
+    @objc private func screensChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.dockController.reapply()
+            self.brightnessController.refresh()
+            self.refreshTitle()
+        }
     }
 
     @objc private func scrollBaselineChanged() {
@@ -622,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let width: CGFloat = 280, height: CGFloat = 52
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
 
-        let label = NSTextField(labelWithString: t.supported ? "🔆 \(t.name)" : "🔆 \(t.name)(不支持 DDC)")
+        let label = NSTextField(labelWithString: t.supported ? "🔆 \(t.name)" : "🔆 \(t.name)(亮度被锁定 / 不支持 DDC)")
         label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = t.supported ? .labelColor : .secondaryLabelColor
         label.frame = NSRect(x: 20, y: 28, width: width - 40, height: 16)

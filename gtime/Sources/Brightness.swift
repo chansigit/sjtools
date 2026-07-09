@@ -8,13 +8,14 @@ import IOKit
 private typealias DSGetBrightnessFn = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
 private typealias DSSetBrightnessFn = @convention(c) (CGDirectDisplayID, Float) -> Int32
 private typealias AVServiceCreateFn = @convention(c) (CFAllocator?, io_service_t) -> Unmanaged<CFTypeRef>?
-private typealias AVWriteI2CFn = @convention(c) (CFTypeRef, UInt32, UInt32, UnsafeMutableRawPointer, UInt32) -> Int32
+private typealias AVI2CFn = @convention(c) (CFTypeRef, UInt32, UInt32, UnsafeMutableRawPointer, UInt32) -> Int32
 
 private struct PrivateAPI {
     let dsGet: DSGetBrightnessFn?
     let dsSet: DSSetBrightnessFn?
     let avCreate: AVServiceCreateFn?
-    let avWrite: AVWriteI2CFn?
+    let avWrite: AVI2CFn?
+    let avRead: AVI2CFn?
 
     init() {
         let ds = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW)
@@ -23,6 +24,7 @@ private struct PrivateAPI {
         let iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW)
         avCreate = PrivateAPI.sym(iokit, "IOAVServiceCreateWithService")
         avWrite = PrivateAPI.sym(iokit, "IOAVServiceWriteI2C")
+        avRead = PrivateAPI.sym(iokit, "IOAVServiceReadI2C")
     }
 
     static func sym<T>(_ handle: UnsafeMutableRawPointer?, _ name: String) -> T? {
@@ -40,14 +42,14 @@ final class BrightnessTarget {
     let name: String
     let kind: DisplayKind
     let avService: CFTypeRef?
-    let supported: Bool
+    var supported: Bool
 
     init(id: CGDirectDisplayID, name: String, kind: DisplayKind, avService: CFTypeRef?) {
         self.id = id
         self.name = name
         self.kind = kind
         self.avService = avService
-        self.supported = (kind == .builtin) || (avService != nil)
+        self.supported = (kind == .builtin)   // external support decided in refresh()
     }
 }
 
@@ -58,9 +60,11 @@ final class BrightnessController {
     private let defaults = UserDefaults.standard
     private(set) var targets: [BrightnessTarget] = []
 
-    /// Re-enumerate displays and pair external ones with their DDC AV services (in order).
+    /// Re-enumerate displays, pair external ones with their DDC AV services (in order),
+    /// and probe each external over DDC to learn whether brightness is actually controllable
+    /// (a monitor with brightness locked — e.g. HDR mode — reports max = 0).
     func refresh() {
-        let displays = listDockDisplays()   // reuse: id, name, bounds, isMain
+        let displays = listDockDisplays()
         let externalServices = collectExternalAVServices()
         var extIndex = 0
         targets = displays.map { d in
@@ -69,12 +73,16 @@ final class BrightnessController {
             }
             let svc = extIndex < externalServices.count ? externalServices[extIndex] : nil
             extIndex += 1
-            return BrightnessTarget(id: d.id, name: d.name, kind: .external, avService: svc)
+            let t = BrightnessTarget(id: d.id, name: d.name, kind: .external, avService: svc)
+            // DDC reads on many monitors are unreliable, so support == "we have a DDC
+            // service to write to". Whether the panel honours the write is up to the
+            // monitor (HDR mode locks brightness on some displays).
+            t.supported = (svc != nil)
+            return t
         }
     }
 
-    /// Best-effort current brightness (0...100). Built-in reads live; external uses the
-    /// remembered value (DDC reads are slow/unreliable), defaulting to 50.
+    /// Best-effort current brightness (0...100).
     func currentPercent(_ t: BrightnessTarget) -> Int {
         if t.kind == .builtin, let get = api.dsGet {
             var value: Float = 0
@@ -96,8 +104,8 @@ final class BrightnessController {
             guard let set = api.dsSet else { return false }
             return set(t.id, Float(p) / 100.0) == 0
         case .external:
-            guard let svc = t.avService, let write = api.avWrite else { return false }
-            var payload = ddcSetVCPPayload(vcp: 0x10, value: UInt16(p))
+            guard t.supported, let svc = t.avService, let write = api.avWrite else { return false }
+            var payload = ddcSetVCPPayload(vcp: 0x10, value: UInt16(p))   // raw 0...100
             let rc = payload.withUnsafeMutableBytes { buf -> Int32 in
                 write(svc, 0x37, 0x51, buf.baseAddress!, UInt32(buf.count))
             }

@@ -174,7 +174,21 @@ private func dockPinCallback(
     let bounds = CGDisplayBounds(displayID)
     if let clamped = clampedCursor(point: point, displayBounds: bounds,
                                    isTargetDisplay: isTarget, dockEdge: c.edge, zone: c.zone) {
-        event.location = clamped
+        // Only enforce at a TRUE outer edge. If another display sits just beyond this edge,
+        // it's an internal boundary — blocking it would trap the cursor between screens.
+        let probe = edgeProbePoint(point: point, displayBounds: bounds, dockEdge: c.edge)
+        var pd: CGDirectDisplayID = 0
+        var pc: UInt32 = 0
+        CGGetDisplaysWithRect(CGRect(x: probe.x, y: probe.y, width: 1, height: 1), 1, &pd, &pc)
+        if pc == 0 {
+            event.location = clamped
+            // Rewriting the event location alone does NOT hold a real hardware cursor, so
+            // forcibly warp it out of the Dock trigger zone, then re-associate so the
+            // post-warp suppression window doesn't briefly freeze the pointer.
+            CGWarpMouseCursorPosition(clamped)
+            CGAssociateMouseAndMouseCursorPosition(1)
+            return nil   // swallow the event; the warp already positioned the cursor
+        }
     }
     return Unmanaged.passUnretained(event)
 }

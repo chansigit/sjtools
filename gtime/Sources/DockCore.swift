@@ -28,3 +28,14 @@ func clampedCursor(point: CGPoint, displayBounds b: CGRect,
     }
     return nil
 }
+
+/// A point just beyond a display's Dock edge. If it lands on another display the edge is an
+/// internal boundary (don't block — the user must be able to move between displays there);
+/// if it lands on no display the edge is a true outer edge where the Dock can trigger.
+func edgeProbePoint(point: CGPoint, displayBounds b: CGRect, dockEdge: DockEdge, gap: CGFloat = 2) -> CGPoint {
+    switch dockEdge {
+    case .bottom: return CGPoint(x: point.x, y: b.maxY + gap)
+    case .left:   return CGPoint(x: b.minX - gap, y: point.y)
+    case .right:  return CGPoint(x: b.maxX + gap, y: point.y)
+    }
+}

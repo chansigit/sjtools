@@ -179,6 +179,15 @@ let ss = ScrollSettings(mouse: .reverse, trackpad: .natural)
 expectEq(decodeScrollSettings(encodeScrollSettings(ss)), ss, "scroll settings JSON round-trip")
 expectEq(decodeScrollSettings(Data("junk".utf8)), ScrollSettings.default, "garbage scroll settings → default")
 
+// ── edge probe point (internal-boundary detection) ───────────────────────────
+let epb = CGRect(x: 0, y: 0, width: 1000, height: 800)
+expectEq(edgeProbePoint(point: CGPoint(x: 500, y: 799), displayBounds: epb, dockEdge: .bottom, gap: 2),
+         CGPoint(x: 500, y: 802), "bottom probe just below edge, keeps x")
+expectEq(edgeProbePoint(point: CGPoint(x: 5, y: 400), displayBounds: epb, dockEdge: .left, gap: 2),
+         CGPoint(x: -2, y: 400), "left probe just left of edge, keeps y")
+expectEq(edgeProbePoint(point: CGPoint(x: 995, y: 400), displayBounds: epb, dockEdge: .right, gap: 2),
+         CGPoint(x: 1002, y: 400), "right probe just right of edge, keeps y")
+
 // ── DockPin clamp math ───────────────────────────────────────────────────────
 let dpBounds = CGRect(x: 0, y: 0, width: 1000, height: 800)   // maxY = 800, maxX = 1000
 // The target display is never clamped.
