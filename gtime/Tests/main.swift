@@ -179,5 +179,38 @@ let ss = ScrollSettings(mouse: .reverse, trackpad: .natural)
 expectEq(decodeScrollSettings(encodeScrollSettings(ss)), ss, "scroll settings JSON round-trip")
 expectEq(decodeScrollSettings(Data("junk".utf8)), ScrollSettings.default, "garbage scroll settings → default")
 
+// ── DockPin clamp math ───────────────────────────────────────────────────────
+let dpBounds = CGRect(x: 0, y: 0, width: 1000, height: 800)   // maxY = 800, maxX = 1000
+// The target display is never clamped.
+expectTrue(clampedCursor(point: CGPoint(x: 500, y: 799), displayBounds: dpBounds,
+                         isTargetDisplay: true, dockEdge: .bottom, zone: 6) == nil,
+           "target display never clamps")
+// Non-target, near bottom edge → push y to maxY-zone-1 = 793, keep x.
+if let c = clampedCursor(point: CGPoint(x: 500, y: 799), displayBounds: dpBounds,
+                         isTargetDisplay: false, dockEdge: .bottom, zone: 6) {
+    expectEq(c.y, CGFloat(793), "bottom clamp y")
+    expectEq(c.x, CGFloat(500), "bottom clamp keeps x")
+} else { expectTrue(false, "expected clamp at bottom edge") }
+// Non-target, far from bottom edge → no clamp.
+expectTrue(clampedCursor(point: CGPoint(x: 500, y: 700), displayBounds: dpBounds,
+                         isTargetDisplay: false, dockEdge: .bottom, zone: 6) == nil,
+           "not near bottom edge = no clamp")
+// Left dock: near left edge (x <= minX+zone) → push x to minX+zone+1 = 7.
+if let c = clampedCursor(point: CGPoint(x: 2, y: 400), displayBounds: dpBounds,
+                         isTargetDisplay: false, dockEdge: .left, zone: 6) {
+    expectEq(c.x, CGFloat(7), "left clamp x")
+    expectEq(c.y, CGFloat(400), "left clamp keeps y")
+} else { expectTrue(false, "expected clamp at left edge") }
+// Right dock: near right edge (x >= maxX-zone) → push x to maxX-zone-1 = 993.
+if let c = clampedCursor(point: CGPoint(x: 998, y: 400), displayBounds: dpBounds,
+                         isTargetDisplay: false, dockEdge: .right, zone: 6) {
+    expectEq(c.x, CGFloat(993), "right clamp x")
+} else { expectTrue(false, "expected clamp at right edge") }
+// Orientation parsing
+expectEq(dockEdge(from: "left"), DockEdge.left, "parse left orientation")
+expectEq(dockEdge(from: "right"), DockEdge.right, "parse right orientation")
+expectEq(dockEdge(from: "bottom"), DockEdge.bottom, "parse bottom orientation")
+expectEq(dockEdge(from: "garbage"), DockEdge.bottom, "unknown orientation defaults to bottom")
+
 print("\n\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -5,11 +5,12 @@ cd "$(dirname "$0")"
 
 echo "==> Running tests"
 mkdir -p build
-swiftc Sources/GTimeCore.swift Sources/ScrollCore.swift Tests/main.swift -o build/tests
+swiftc Sources/GTimeCore.swift Sources/ScrollCore.swift Sources/DockCore.swift Tests/main.swift -o build/tests
 ./build/tests
 
 echo "==> Compiling"
-swiftc -O Sources/GTimeCore.swift Sources/ScrollCore.swift Sources/ScrollFlip.swift Sources/main.swift -o build/GTime
+swiftc -O Sources/GTimeCore.swift Sources/ScrollCore.swift Sources/ScrollFlip.swift \
+    Sources/DockCore.swift Sources/DockPin.swift Sources/main.swift -o build/GTime
 
 echo "==> Packaging GTime.app"
 APP=build/GTime.app

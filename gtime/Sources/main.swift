@@ -270,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let defaults = UserDefaults.standard
     private lazy var scrollController = ScrollFlipController(
         settings: decodeScrollSettings(defaults.data(forKey: "scrollSettings") ?? Data()))
+    private lazy var dockController = DockPinController(targetName: defaults.string(forKey: "dockPinTarget"))
 
     private var launchAgentURL: URL {
         return FileManager.default.homeDirectoryForCurrentUser
@@ -325,6 +326,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(scrollBaselineChanged),
             name: NSNotification.Name("SwipeScrollDirectionDidChangeNotification"), object: nil)
+
+        // Re-apply persisted Dock pin (starts the tap if trusted and a display is pinned).
+        dockController.reapply()
     }
 
     @objc private func scrollBaselineChanged() {
@@ -432,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(buildScrollMenuItem())
+        menu.addItem(buildDockMenuItem())
 
         menu.addItem(.separator())
 
@@ -536,6 +541,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    // MARK: Dock pin
+
+    private func buildDockMenuItem() -> NSMenuItem {
+        dockController.reapply()   // re-resolve target + orientation from live state
+        let displays = listDockDisplays()
+        let current = dockController.targetName
+
+        let root = NSMenuItem(title: "Dock 固定", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        let off = NSMenuItem(title: "关闭(不固定)", action: #selector(setDockTarget(_:)), keyEquivalent: "")
+        off.target = self
+        off.state = current == nil ? .on : .off
+        sub.addItem(off)
+
+        for d in displays {
+            let title = d.isMain ? "\(d.name)(主)" : d.name
+            let item = NSMenuItem(title: title, action: #selector(setDockTarget(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = d.name
+            item.state = (current == d.name) ? .on : .off
+            sub.addItem(item)
+        }
+
+        sub.addItem(.separator())
+        if let cur = currentDockDisplayID(), let info = displays.first(where: { $0.id == cur }) {
+            let line = NSMenuItem(title: "Dock 当前在:\(info.name)", action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            sub.addItem(line)
+        }
+        if current != nil && !hasAccessibilityPermission(prompt: false) {
+            let perm = NSMenuItem(title: "⚠️ 授予辅助功能权限…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            perm.target = self
+            sub.addItem(perm)
+        }
+
+        root.submenu = sub
+        return root
+    }
+
+    @objc private func setDockTarget(_ sender: NSMenuItem) {
+        let name = sender.representedObject as? String   // nil = 关闭(不固定)
+        if let name = name {
+            defaults.set(name, forKey: "dockPinTarget")
+        } else {
+            defaults.removeObject(forKey: "dockPinTarget")
+        }
+        dockController.setTarget(name, promptForPermission: true)
     }
 
     // MARK: Launch at login (LaunchAgent; SMAppService needs a newer SDK than this box has)
