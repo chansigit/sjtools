@@ -115,6 +115,53 @@ final class DockPinController {
         return startTap()
     }
 
+    /// Actively migrate the Dock onto the pinned display. macOS relocates the always-on
+    /// Dock only when the pointer *presses* against a display's Dock edge — a mere warp
+    /// isn't enough, it needs sustained movement (delta) into the edge. We approach the
+    /// edge from just inside, then post repeated move events carrying downward/side delta
+    /// against it, and finally restore the pointer. Runs off the main thread.
+    func moveDockToTarget() {
+        guard let name = targetName,
+              let disp = listDockDisplays().first(where: { $0.name == name }) else { return }
+        let b = disp.bounds
+        let edge = self.edge
+        let saved = CGEvent(source: nil)?.location
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            func post(_ p: CGPoint, dx: Double, dy: Double) {
+                if let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                   mouseCursorPosition: p, mouseButton: .left) {
+                    e.setDoubleValueField(.mouseEventDeltaX, value: dx)
+                    e.setDoubleValueField(.mouseEventDeltaY, value: dy)
+                    e.post(tap: .cghidEventTap)
+                }
+            }
+            let approach: CGPoint, edgePt: CGPoint, dx: Double, dy: Double
+            switch edge {
+            case .bottom: approach = CGPoint(x: b.midX, y: b.maxY - 40); edgePt = CGPoint(x: b.midX, y: b.maxY - 1); dx = 0; dy = 12
+            case .left:   approach = CGPoint(x: b.minX + 40, y: b.midY); edgePt = CGPoint(x: b.minX + 1, y: b.midY); dx = -12; dy = 0
+            case .right:  approach = CGPoint(x: b.maxX - 40, y: b.midY); edgePt = CGPoint(x: b.maxX - 1, y: b.midY); dx = 12; dy = 0
+            }
+            CGWarpMouseCursorPosition(approach)
+            CGAssociateMouseAndMouseCursorPosition(1)
+            usleep(50_000)
+            // step toward the edge
+            for i in 1...10 {
+                let f = CGFloat(i) / 10.0
+                post(CGPoint(x: approach.x + (edgePt.x - approach.x) * f,
+                             y: approach.y + (edgePt.y - approach.y) * f), dx: dx, dy: dy)
+                usleep(12_000)
+            }
+            // sustained pressure against the edge
+            for _ in 0..<40 { post(edgePt, dx: dx, dy: dy); usleep(12_000) }
+            usleep(150_000)
+            if let saved = saved {
+                CGWarpMouseCursorPosition(saved)
+                CGAssociateMouseAndMouseCursorPosition(1)
+            }
+        }
+    }
+
     @discardableResult
     private func startTap() -> Bool {
         if let tap = eventTap {

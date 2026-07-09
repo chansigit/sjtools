@@ -609,6 +609,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defaults.removeObject(forKey: "dockPinTarget")
         }
         dockController.setTarget(name, promptForPermission: true)
+        if name != nil {
+            dockController.moveDockToTarget()   // migrate the Dock onto the chosen screen now
+        }
     }
 
     // MARK: Display brightness
