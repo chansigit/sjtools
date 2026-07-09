@@ -49,7 +49,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-codesign --force --sign - "$APP"
+# Prefer a stable self-signed cert (so Accessibility permission survives rebuilds);
+# fall back to ad-hoc if it isn't set up. Run ./make-signing-cert.sh once to create it.
+SIGN_ID="GTime Self-Signed"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+  codesign --force --sign "$SIGN_ID" "$APP"
+else
+  codesign --force --sign - "$APP"
+  echo "(tip: run ./make-signing-cert.sh once so辅助功能权限 survives rebuilds)"
+fi
 
 echo "==> Installing"
 DEST=/Applications
